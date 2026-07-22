@@ -1,155 +1,138 @@
-# Agent-Tenable-Install.ps1
+# Rapid7 Insight Agent - Complete Removal Script
 
 ## Overview
 
-This PowerShell script automates the deployment of the Tenable Nessus Agent via Microsoft System Center Configuration Manager (SCCM). It creates a new SCCM application, configures deployment types, distributes content to distribution points, and deploys the application to target collections.
+`Rapid7_Uninstall.ps1` is a PowerShell script that performs a complete removal of the Rapid7 Insight Agent from Windows systems. It dynamically discovers the installed version and ensures thorough cleanup of all artifacts including services, registry keys, files, and configuration data.
 
-## Purpose
+## Features
 
-The script is designed to streamline the SCCM application deployment process for Tenable Agent updates. It handles:
-- Application creation in SCCM
-- MSI product code extraction
-- Script-based deployment type configuration
-- Content distribution to distribution points
-- Automated deployment to server collections
+- **Dynamic Discovery**: Automatically detects installed Rapid7 Insight Agent version and GUID from registry
+- **Service Management**: Stops and removes the `ir_agent` Windows service
+- **MSI Uninstall**: Executes the official MSI uninstaller with silent parameters
+- **Registry Cleanup**: Removes all leftover registry entries including:
+  - Uninstall keys (both 32-bit and 64-bit)
+  - Installer Products keys
+  - Installer Features keys
+  - User-specific installer data
+- **File Cleanup**: Removes:
+  - Installation folder (typically `C:\Program Files\Rapid7\Insight Agent`)
+  - ProgramData directories (`C:\ProgramData\rapid7` and `C:\ProgramData\Rapid7`)
+- **Verification**: Performs post-removal verification to ensure complete cleanup
+- **Logging**: Outputs detailed progress with computer name prefix for easy tracking
 
-## Prerequisites
+## Requirements
 
-- **SCCM Administrator Rights**: Must have permissions to create applications and deploy content
-- **SCCM Console Installed**: Configuration Manager PowerShell module must be available
-- **Network Access**: Access to the SCCM provider server and source file shares
-- **PowerShell 5.1+**: Required for SCCM module interaction
-
-## Configuration
-
-Before running the script, update the following variables in the `CONFIGURATION` section:
-
-```powershell
-$Version      = "11.2.1"           # Tenable Agent version
-$ReleaseDate  = "7/21/2026"         # Release date
-$Owner        = "AppOwner"          # Application owner
-$SupportContact = "Appsupport"      # Support contact
-$MsiFileName  = "NessusAgent-11.2.1-x64.msi"  # MSI filename
-```
-
-### SCCM Configuration
-
-```powershell
-$SiteCode            = "SVR"                  # SCCM site code
-$ProviderMachineName = "mempr1.contoso.com"   # SCCM provider server
-```
-
-### Path Configuration
-
-```powershell
-$SourceRoot   = "\\mempr1.contoso.com\source$\Tenable"  # Source files location
-$FolderPath   = "${SiteCode}:\Application\Tenable"       # SCCM application folder
-$MsiPath      = "${SourceRoot}\${Version}\${MsiFileName}" # Full MSI path
-```
-
-### Deployment Configuration
-
-The following derived values are automatically calculated but can be modified if needed:
-
-```powershell
-$AppName              = "Tenable Agent ${Version} (See Comments)"
-$DeploymentTypeName   = "Tenable Agent ${Version}"
-$InstallCommand       = 'powershell.exe -ExecutionPolicy Bypass -file "Tenable_install.ps1"'
-$UninstallCommand     = "msiexec /uninstall $MsiFileName /quiet"
-$CollectionName       = "WINTSTSRVs"           # Target collection
-$DPGroupName          = "All DPs"             # Distribution point group
-```
+- Windows PowerShell 5.1 or later
+- Administrator privileges (required for service management and registry modifications)
+- Rapid7 Insight Agent must be installed (script exits gracefully if not found)
 
 ## Usage
 
-1. **Prepare the Source Files**
-   - Place the Tenable Agent MSI file in: `\\mempr1.contoso.com\source$\Tenable\[Version]\`
-   - Ensure the installation script `Tenable_install.ps1` exists in the same directory
+### Basic Execution
 
-2. **Update Configuration**
-   - Edit the `CONFIGURATION` section with the new version details
-   - Update `$Version`, `$ReleaseDate`, and `$MsiFileName` for each release
+```powershell
+.\Rapid7_Uninstall.ps1
+```
 
-3. **Run the Script**
-   ```powershell
-   .\Agent-Tenable-Install.ps1
-   ```
+### Execution with SCCM/Intune
 
-4. **Monitor Execution**
-   - The script will display progress messages
-   - It waits for content distribution to complete before creating the deployment
-   - Check for green success messages indicating each stage completed
+The script is designed to work with deployment tools like SCCM or Intune. It includes computer name prefixes in all output for centralized logging.
 
-## Script Execution Flow
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File "Rapid7_Uninstall.ps1"
+```
 
-1. **Extract MSI Product Code**
-   - Uses Windows Installer COM object to read the ProductCode from the MSI
-   - Required for SCCM detection methods
+## Script Behavior
 
-2. **Connect to SCCM**
-   - Imports ConfigurationManager module
-   - Creates PSDrive to the SCCM site
+### Step-by-Step Process
 
-3. **Create Application**
-   - Creates new CMApplication with specified metadata
-   - Moves application to the Tenable folder in SCCM
+1. **Registry Mapping**: Maps HKCR if not already available
+2. **Version Discovery**: Searches both 32-bit and 64-bit uninstall registry paths for Rapid7 entries
+3. **Service Stop**: Stops the `ir_agent` service if running
+4. **MSI Uninstall**: Executes `msiexec.exe /X{GUID} /quiet /norestart` with logging to `%TEMP%\r7_uninstall.log`
+5. **Service Cleanup**: Force-deletes any leftover service using `sc.exe delete`
+6. **Registry Cleanup**: Removes all related registry keys including scrambled GUID entries
+7. **File Cleanup**: Takes ownership and removes installation folder and ProgramData directories
+8. **Verification**: Checks for remaining artifacts and reports success or warnings
 
-4. **Add Deployment Type**
-   - Configures script-based installer deployment
-   - Sets install/uninstall commands
-   - Configures behavior (system install, no reboot, 15 min runtime)
+### Exit Codes
 
-5. **Distribute Content**
-   - Distributes application content to all distribution points
-   - Waits for distribution to complete (checks every 60 seconds)
+- **0**: Success (agent not found or successfully removed)
+- **MSI Exit Codes**: The script reports MSI exit codes but continues with cleanup regardless:
+  - `0` or `3010`: Success
+  - `1612`: Source missing (fallback cleanup handles this)
+  - `1605`: Already removed
 
-6. **Deploy Application**
-   - Creates required deployment to target collection
-   - Configured for Software Center display only
-   - Allows repair and overrides service windows
+## Output Format
 
-## Deployment Notes
+All output includes the computer name prefix for easy identification in logs:
 
-- **Brownfield Deployments**: The script description indicates this version removes Rapid7 agents during installation
-- **Greenfield Deployments**: Use for new builds without existing Rapid7 installations
-- **Collection Targeting**: Currently targets `WINTSTSRVs` collection
-- **Distribution Points**: Content is distributed to `All DPs` group
+```
+[COMPUTERNAME] Found       : Rapid7 Insight Agent v.x.x.x
+[COMPUTERNAME] GUID        : {xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}
+[COMPUTERNAME] InstallPath : C:\Program Files\Rapid7\Insight Agent
+
+[COMPUTERNAME] Stopping service...
+[COMPUTERNAME] Stopped : ir_agent
+
+[COMPUTERNAME] Running MSI uninstall...
+[COMPUTERNAME] MSI exit code: 0
+
+[COMPUTERNAME] SUCCESS: Rapid7 Insight Agent fully removed!
+```
 
 ## Troubleshooting
 
-### Module Import Failures
-Ensure the SCCM console is installed and the path `$ENV:SMS_ADMIN_UI_PATH` is available.
+### Agent Not Found
 
-### MSI Product Code Errors
-Verify the MSI file exists at the specified path and is accessible.
+If the script reports "Rapid7 Insight Agent not found - skipping", verify:
+- The agent is actually installed
+- Check both `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall` and `HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall`
 
-### Distribution Timeout
-The script waits indefinitely for content distribution. If stuck, check:
-- Distribution point status in SCCM
-- Network connectivity to DPs
-- Sufficient disk space on distribution points
+### Leftover Files After Execution
 
-### Permission Errors
-Ensure your account has:
-- Application creation rights in SCCM
-- Write access to source file shares
-- Distribution point group membership
+If files remain after script execution:
+- Check permissions on the installation folder
+- Manually take ownership: `takeown /f "C:\Program Files\Rapid7\Insight Agent" /r /d y`
+- Grant admin permissions: `icacls "C:\Program Files\Rapid7\Insight Agent" /grant Administrators:F /t`
+- Reboot and retry if files are in use
 
-## Version History
+### Service Still Exists
 
-| Version | Release Date | Notes |
-|---------|-------------|-------|
-| 11.2.1 | 7/21/2026 | Initial version |
+If the service remains after execution:
+- Manually stop: `Stop-Service -Name ir_agent -Force`
+- Manually delete: `sc.exe delete ir_agent`
+- Reboot if service is locked
+
+## Log Files
+
+The MSI uninstaller creates a detailed log at:
+```
+%TEMP%\r7_uninstall.log
+```
+
+Review this file if MSI uninstallation fails.
+
+## Security Considerations
+
+- Script requires administrator privileges
+- Modifies system registry and service configuration
+- Deletes files from Program Files and ProgramData
+- Should be tested in a non-production environment before deployment
+
+## Version Compatibility
+
+- Tested on Windows 10/11
+- Compatible with both 32-bit and 64-bit Rapid7 installations
+- Handles WOW6432Node registry redirection automatically
+
+## License
+
+This script is provided as-is for system administration purposes.
 
 ## Support
 
-For issues or questions:
-- **Owner**: AppOwner
-- **Support**: Appsupport
-- **Publisher**: Tenable
-
-## Related Files
-
-- `Tenable_install.ps1` - Installation script referenced by the deployment type
-- `NessusAgent-[Version]-x64.msi` - Tenable Agent installer package
-- `Tenable.png` - Application icon file
+For issues related to:
+- **Script execution**: Check the troubleshooting section above
+- **Rapid7 Agent**: Contact Rapid7 support
+- **SCCM/Intune deployment**: Consult your deployment tool documentation
